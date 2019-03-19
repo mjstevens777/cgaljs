@@ -1,6 +1,6 @@
 import os
 import shutil
-from subprocess import call
+from subprocess import check_call
 from utils import download, untar
 
 DOWNLOAD_DIR = "downloads"
@@ -21,30 +21,22 @@ def build_component(name, includes_dir, libs_dir, working_dir=None):
     download_tarballs(component.DOWNLOADS, working_dir)
 
     # Step 2 - Patch source
-    try:
+    if hasattr(component, 'SOURCE_PATCHES'):
         patch_files(component.SOURCE_PATCHES, source_dir, name)
-    except:
-        pass
 
     # Step 3 - Configure
-    try:
+    if hasattr(component, 'CONFIGURE_CMD'):
         command = component.CONFIGURE_CMD.format(includes=os.path.abspath(includes_dir), libs=os.path.abspath(libs_dir),
                                                  component_dir=os.path.abspath(component_dir))
-        call(command, cwd=source_dir, shell=True)
-    except:
-        pass
+        check_call(command, cwd=source_dir, shell=True)
 
     # Step 4 - Patch any generated config or headers (IE Anything that's not in the original tarball)
-    try:
+    if hasattr(component, 'CONFIG_PATCHES'):
         patch_files(component.CONFIG_PATCHES, source_dir, name)
-    except:
-        pass
 
     # Step 5 - Build
-    try:
-        call(component.MAKE_CMD, cwd=source_dir, shell=True)
-    except:
-        pass
+    if hasattr(component, 'MAKE_CMD'):
+        check_call(component.MAKE_CMD, cwd=source_dir, shell=True)
 
     # Step 6 - Copy artifacts to given destination
     copy_artifacts(component.ARTIFACTS, working_dir, includes_dir, libs_dir)
@@ -69,8 +61,7 @@ def get_component(name):
     try:
         return __import__("components.%s.config" % name, fromlist="components")
     except:
-        print "No such component:%s" % name
-        return
+        raise ImportError("No such component:%s" % name)
 
 
 def prepare_directory(name, working_dir=None):
@@ -78,10 +69,7 @@ def prepare_directory(name, working_dir=None):
         working_dir = get_default_working_dir(name)
 
     # Cleanup old source
-    try:
-        shutil.rmtree(get_source_dir(working_dir))
-    except:
-        pass
+    shutil.rmtree(get_source_dir(working_dir), ignore_errors=True)
 
     return working_dir
 
@@ -93,32 +81,23 @@ def download_tarballs(downloads, working_dir):
 
 
 def copy_artifacts(artifacts, working_dir, includes_dir, libs_dir):
-    try:
-        for include in artifacts['includes']:
-            source = os.path.join(get_source_dir(working_dir), include['source'])
-            destination = os.path.join(includes_dir, include['name'])
-            print "Copying include directory from:%s to:%s" % tuple([source, destination])
+    for include in artifacts.get('includes', []):
+        source = os.path.join(get_source_dir(working_dir), include['source'])
+        destination = os.path.join(includes_dir, include['name'])
+        print "Copying include directory from:%s to:%s" % tuple([source, destination])
 
-            try:
-                shutil.rmtree(destination)
-            except:
-                pass
-            shutil.copytree(source, destination)
-    except:
-        print "Component did not produce any includes"
+        shutil.rmtree(destination, ignore_errors=True)
+        shutil.copytree(source, destination)
 
-    try:
-        for lib in artifacts['libs']:
-            source = os.path.join(get_source_dir(working_dir), lib['source'])
-            destination = os.path.join(libs_dir, lib['name'])
-            print "Copying lib from:%s to:%s" % tuple([source, destination])
-            shutil.copy(source, destination)
-    except:
-        print "Component did not produce any libs"
+    for lib in artifacts.get('libs', []):
+        source = os.path.join(get_source_dir(working_dir), lib['source'])
+        destination = os.path.join(libs_dir, lib['name'])
+        print "Copying lib from:%s to:%s" % tuple([source, destination])
+        shutil.copy(source, destination)
 
 
 def patch_files(patches, source_dir, name):
     for patch in patches:
         original_file = os.path.join(source_dir, patch['file'])
         patch_file = os.path.join('components', name, 'patches', patch['patch'])
-        call(['patch', original_file, patch_file])
+        check_call(['patch', original_file, patch_file])
